@@ -1,0 +1,472 @@
+# 4/21/21 MY : possible to improve pat's script to hone in on possible tad border ctcfs?
+# pat approach 1: closest ctcf peaks to tad borders, distance = sep into upstream and downstream.
+# pat approach 2: ctcf peaks that don’t overlap w tads, then select the ones that are closest to the tads,  sep by strand info into up/downstream.
+
+# bedt intersect with tads to find tad(s) assoc'd w each site; do sep for upstr and downstr then pair them up = bedpe file.
+# problems: book-ended features not captured..?
+# things just inside the tads not captured..?
+
+#visualize IGV:
+360min_rep1_40kb_TAD.hg38tohg19.mrg.bed
+360min_rep2_40kb_TAD.hg38tohg19.mrg.bed
+hiccupsloops.rep1.hg38tohg19.mrg.bed
+hiccupsloops.rep2.hg38tohg19.mrg.bed
+hiccupsloops.rep1.hg38tohg19.bedpe
+
+#sometimes the ctcf_pairs bedpe file starts at a tad start and ends at the end of the next tad..some tads have no ctcfs found at borders.
+
+# try first retrieve strand info for all CTCFs, then find closest (report distance; rank by distance; impose limit of 10kb or so) without caring whether it's inside or outside the tad borders / for each START tad coordinate, 
+#Then closest (report distance) without caring whether it's inside or outside of TAD border for each STOP tad coord
+
+# closest CTCF sites: for each tad pair them all possible ways, then select the ones that are convergent-inclusive.
+#= list of all possible ctcf sites that could be acting as tad borders; could have multiple ones per tad. Not claiming they are the true ones; just a full putative set. This also would capture book-ended features ie if a ctcf is re-used as a border element for the adjacent TAD.
+
+# # retrieve strand info; also annotate other ctcfs that do not overlap jaspar motifs as having no strand info "."
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | cut -f 13 | sort -k1,1n | head #1-19bp overlap.
+#-wo	Write the original A and B entries plus the number of base
+#		pairs of overlap between the two features.
+#		- Overlaps restricted by -f and -r.
+#		  Only A features with overlap are reported.
+
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | cut -f 1-5,12 | cut -f 6 | sort -k1,1 | uniq -c
+#7989 +
+#7705 -
+
+#any ctcf peaks that dont overlap with any jaspar motifs?
+#	-v	Only report those entries in A that have _no overlaps_ with B.
+bedtools intersect -v -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | wc -l
+#   12639
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | wc -l
+#   15694
+#27972 U2OS_CTCF_peaks.filt.bed
+
+#12639+15694 = 28333
+
+cut -f 1-3 U2OS_CTCF_peaks.filt.bed | sort -k1,1V -k2,2n | uniq | wc -l
+#   27972
+cut -f 1-3 U2OS_CTCF_peaks.filt.bed | sort -k1,1V -k2,2n | bedtools merge -i stdin | wc -l
+#   27972
+bedtools intersect -wao -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | wc -l
+#   28333
+#why are there extra ctcf peaks..? maybe some b features overlap 2x with a ctf peak. what if they contradict? --> substitute "." for unknown.
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | cut -f 1-3 | sort -k1,1V -k2,2n | uniq | wc -l
+#   15333
+ bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | cut -f 1-3,12 | uniq | wc -l
+#   15487
+
+# scan next line, if chr coords are the same as the previous line cat the strand info / see if it's the same...
+
+#	-c	For each entry in A, report the number of overlaps with B.
+#		- Reports 0 for A entries that have no overlap with B.
+#		- Overlaps restricted by -f, -F, -r, and -s.
+
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | cut -f 4,7 | sort -k2,2n | tail -n 304 | head
+#U2OS_CTCF_peak_9999	1
+#U2OS_CTCF_peak_10045	2
+
+# 304 ctcf peaks have more than 1 hit in JASPAR and it goes all the way up to 11 hits..
+# grep the peaks by their names, retrievetheir coords from the A file, and intersect just those with the B file, then find the multiple hits in B and concat all strand info into 1 line, select the ones that dont have any contradictions and exclude the rest..
+
+# STOPPED TUES APR 20
+# working dir /Volumes/My Book/Mish/ChIP/externaldata/HiC_U2OS/BED
+
+# how to concatenate multiple hits:
+#cat lines with same 1st col into 1 line:
+awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' file
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="+" && $3=="-") print $0}' | wc -l
+#      43
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="-" && $3=="+") print $0}' | wc -l
+#      109
+
+# what about places where cols 1 and 2 are same sign but beyond that there is a contradiction?
+
+# use a different bedtools filter to make sure only the jaspar motif with the highest degree of overlap with the ctcf peak gets called? then screen for tiebreakers..
+
+# 
+# -wo: report nr bp oerlap = field 13
+
+bedtools intersect -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$13}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}' | wc -l
+#     290
+
+# select the one with the largest degree of overlap:
+sort -k1,1 -k5,5rn counts.bed | awk '!x[$1]++' >counts.longestfragments.bed
+
+
+#bedtools closest #default minimum 1bp overlap req'd
+#	-t	How ties for closest feature are handled.  This occurs when two
+#		features in B have exactly the same "closeness" with A.
+#		By default, all such features in B are reported.
+#		Here are all the options:
+#		- "all"    Report all ties (default).
+#		- "first"  Report the first tie that occurred in the B file.
+#		- "last"   Report the last tie that occurred in the B file.
+
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}' | wc -l
+#     151
+
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="-" && $3=="+") print $0}' | wc -l
+# 109
+
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="+" && $3=="-") print $0}' | wc -l
+#43
+
+#Requirement: all the motifs that overlap ctcf peaks to the same degree have to have agree in sign. The bedtools closest eliminates overlaps that have differing degrees of overlap, but what about sites that are still ties and have more than 2 hits = col4+ and contradict the sign even though the first 2 overlaps agree in sign?
+# --> there are no ties that exceed 2 motifs;
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"_"$2"-"$3"_"$4"_"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | cut -f 4 | sort -k1,1 | uniq -c
+#27972 
+
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}'
+ # this one captures all sites where there are 2 overlaps of same degree, and the sign agrees. what if there is only one?
+ 
+bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($3=="") print $0}' 
+# this capturss all the lines where there is only one unique overlap.
+#remaining fraction: no overlaps = no strand info; use bedtools intersect -v 
+
+
+#bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}' | awk '{split ($1,a,/[-]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"$2}' >ctcf-jsp.2ovlpsagree.tmp
+#only print $2 as $3 agrees with it.
+
+#bedtools closest -wo -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($3=="") print $0}' | awk '{split ($1,a,/[-]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"$2}' >ctcf-jsp.1ovlp.tmp
+
+bedtools intersect -v -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed >ctcf-nojspovlp.tmp
+
+
+cat ctcf-jsp.2ovlpsagree.tmp ctcf-jsp.1ovlp.tmp ctcf-nojspovlp.tmp  | sort -k1,1V -k2,2n | wc -l
+#40459
+#27972 U2OS_CTCF_peaks.filt.bed
+
+cat ctcf-jsp.2ovlpsagree.tmp ctcf-jsp.1ovlp.tmp ctcf-nojspovlp.tmp  | sort -k1,1V -k2,2n -k3,3n | uniq | wc -l
+#40452
+
+cat ctcf-jsp.2ovlpsagree.tmp ctcf-jsp.1ovlp.tmp ctcf-nojspovlp.tmp  | sort -k1,1V -k2,2n -k3,3n | bedtools merge -i stdin | wc -l
+ #  27820
+  
+# ...this is because the A feature is being broken into constituents..
+# for bedtools closest, the manual doesnt list -wo flag!
+
+#therefore need to find largest overlaps manually...
+#
+
+#this one: just extract the largest overlaps. do this by compressing featureA into 1 col, extracting just the strand info followed by the bp overlap from featureB, and then re-splitting back out the featureB values and selecting for when B degree overlap is largest.
+#or: could do another bedtools intersect back into the A feature file, ctcf peaks, and select only for 100% overlaps?!
+
+#	-c	For each entry in A, report the number of overlaps with B.
+#		- Reports 0 for A entries that have no overlap with B.
+#		- Overlaps restricted by -f, -F, -r, and -s.
+		
+#non-overlaps: captured by bedt intersect -v --> dont change.
+#get list of A features that have a single hit in B, then multiple hits in B, subset the A file, bedt intersect them.
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7=="1") print $0}' | wc -l
+#   15030
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | wc -l
+# 303
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7==0) print $0}' | wc -l
+#12639
+# 12639 ctcf-nojspovlp.tmp
+
+
+# =12639+303+15030 = 27972
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7=="1") print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | cut -f 1-5,12 >ctcf-jsp.1ovlp.tmp
+
+# A features with multiple overlaps: subset the A ctcf peaks file, then select longest fragments by sorting by the column that has the nr bp overlap.
+#
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | wc -l
+#     664    # most are prolly just 2 hits, a few 3x.
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | sort -k1,1V -k2,2n -k3,3n -k13,13n | cut -f 1-3,13 | uniq | wc -l
+#     319 # and most of them are ties...
+#
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | sort -k1,1V -k2,2n -k3,3n -k13,13rn | datamash -sW -g 1,2,3 max 13 | wc -l
+#     303
+# but this only prints chr,start,stop,#bp overlap..
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | sort -k1,1V -k2,2n -k3,3n -k13,13rn | datamash -sW -g 1,2,3 max 13 | cut -f 4 | sort -k1,1n
+#all the max overlaps are 19 bp long.
+# therefore filter out any partial overlaps:
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | wc -l
+#648
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | wc -l
+#     648
+
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | cut -f 1,2,3 | sort -k1,1V -k2,2n | uniq | wc -l
+#     303
+     
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}' | wc -l
+#145 tied overlaps agree out of 303.
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="+" && $3=="-") print $0}' | wc -l
+# 40
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="-" && $3=="+") print $0}' | wc -l
+# 105
+
+
+# =145+40+105 = 290...
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | cut -f 3 | sort -k1,1n | uniq -c
+#  13
+# 174 +
+# 116 -
+
+# some of the secondary overlaps have no strand info...how did it get lost?
+cut -f 6 JASPAR_CTCF_motif_srt.bed | sort -k1,1 | uniq -c
+#19491 +
+#19283 -
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | cut -f 12 | sort -k1,1 | uniq -c
+# 297 +
+# 351 -
+#
+
+# for the 13 that lost the 2nd tied overlap's strand info, go back and manually add / check?
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($3=="") print $0}' | wc -l
+# 13 
+
+chr11-4514457-4514761-U2OS_CTCF_peak_4052-9.89086	-
+chr13-108807875-108808190-U2OS_CTCF_peak_7524-11.80449	-
+chr15-77925948-77926215-U2OS_CTCF_peak_9221-9.91601	+
+chr15-78533277-78533644-U2OS_CTCF_peak_9240-10.58649	-
+chr16-60911-61102-U2OS_CTCF_peak_9515-6.48749	-
+chr17-48277885-48278251-U2OS_CTCF_peak_11110-10.30408	+
+chr17-73745909-73746330-U2OS_CTCF_peak_11463-11.74660	-
+chr19-10527503-10527917-U2OS_CTCF_peak_12451-11.13186	-
+chr19-43423736-43424012-U2OS_CTCF_peak_12864-5.31613	-
+chr19-50982397-50982768-U2OS_CTCF_peak_13069-16.98902	-
+chr6-99599962-99600281-U2OS_CTCF_peak_22729-10.05458	+
+chr9-136271949-136272327-U2OS_CTCF_peak_27165-13.30876	+
+chrX-52963923-52964220-U2OS_CTCF_peak_27544-9.73123	-
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($3=="") print $0}' | awk '{split ($1,a,/[-:]/); print a[1]"\t"a[2]"\t"a[3]}' >1.tmp
+
+bedtools intersect -wo -a 1.tmp -b JASPAR_CTCF_motif_srt.bed 
+
+#chr11	4514457	4514761	chr11	4514444	4514463	.	5.89	+	6
+chr11	4514457	4514761	chr11	4514656	4514675	.	5.64	-	19
+
+chr13	108807875	108808190	chr13	108808022	108808041	.	7.05	-	19
+#chr13	108807875	108808190	chr13	108808174	108808193	.	6.53	+	16
+
+#chr15	77925948	77926215	chr15	77925945	77925964	.	8.17	+	16
+chr15	77925948	77926215	chr15	77926004	77926023	.	8.66	+	19
+
+chr15	78533277	78533644	chr15	78533449	78533468	.	7.58	-	19
+#chr15	78533277	78533644	chr15	78533628	78533647	.	5.73	+	16
+
+#chr16	60911	61102	chr16	60903	60922	.	8.87	-	11
+chr16	60911	61102	chr16	60961	60980	.	7.99	-	19
+
+chr17	48277885	48278251	chr17	48278023	48278042	.	6.38	+	19
+#chr17	48277885	48278251	chr17	48278236	48278255	.	6.94	+	15
+
+chr17	73745909	73746330	chr17	73746129	73746148	.	9.21	-	19
+#chr17	73745909	73746330	chr17	73746314	73746333	.	7.26	-	16
+
+#chr19	10527503	10527917	chr19	10527500	10527519	.	6.42	+	16
+chr19	10527503	10527917	chr19	10527719	10527738	.	7.31	-	19
+
+chr19	43423736	43424012	chr19	43423765	43423784	.	6.03	-	19
+#chr19	43423736	43424012	chr19	43424006	43424025	.	6.03	+	6
+
+#chr19	50982397	50982768	chr19	50982384	50982403	.	5.88	-	6
+chr19	50982397	50982768	chr19	50982553	50982572	.	6.58	-	19
+
+#chr6	99599962	99600281	chr6	99599945	99599964	.	5.95	-	2
+chr6	99599962	99600281	chr6	99600115	99600134	.	5.95	+	19
+
+chr9	136271949	136272327	chr9	136272105	136272124	.	6.14	+	19
+#chr9	136271949	136272327	chr9	136272318	136272337	.	6.31	+	9
+
+#chrX	52963923	52964220	chrX	52963921	52963940	.	5.63	+	17
+chrX	52963923	52964220	chrX	52964081	52964100	.	6.82	-	19
+
+
+# so these 13 ctcf peaks are where there was more than one hit but only one was max overlap = not a tie; therefore there was no second strand value.
+
+# 
+
+
+# ==========
+# Part 1: ctcf peaks where there are multiple overlaps with jaspar motifs --> all 303 have at least 1 overlap at the maximum # bp = 19; select only those, then (step a) select only the ones that have 1 max overlap i.e. no ties, (step b) select the ones where the ties have agreeing strand info, and (steps c-d) disagreeing strand info.
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($3=="") print $0}' | awk '{split ($1,a,/[-:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"$2}' >multipleoverlaps1winner.tmp
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2==$3) print $0}' | awk '{split ($1,a,/[-:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"$2}' >tiedoverlaps-strandagrees.tmp
+#145 tied overlaps agree out of 303.
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="+" && $3=="-") print $0}' | awk '{split ($1,a,/[-:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t""."}' >tiedoverlaps-stranddisagrees.pt1.tmp
+# 40
+
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7>1) print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | awk '{if ($13=="19") print $0}' | awk '{print $1"-"$2"-"$3"-"$4"-"$5":"$12}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]}' | awk '{if ($2=="-" && $3=="+") print $0}' | awk '{split ($1,a,/[-:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t""."}' >tiedoverlaps-stranddisagrees.pt2.tmp
+# 105
+
+
+# Part 2: ctcf peaks where there is just one overlap with a jaspar motif
+bedtools intersect -c -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed | awk '{if ($7=="1") print $0}' | cut -f 1-6 | bedtools intersect -wo -a stdin -b JASPAR_CTCF_motif_srt.bed | cut -f 1-5,12 >ctcf-jsp.1ovlp.tmp
+
+
+# Part 3: ctcf peaks with no overlaps with a jaspar motif (easy)
+bedtools intersect -v -a U2OS_CTCF_peaks.filt.bed -b JASPAR_CTCF_motif_srt.bed >ctcf-nojspovlp.tmp
+
+
+cat multipleoverlaps1winner.tmp tiedoverlaps-strandagrees.tmp tiedoverlaps-stranddisagrees.pt1.tmp tiedoverlaps-stranddisagrees.pt2.tmp ctcf-jsp.1ovlp.tmp  ctcf-nojspovlp.tmp | sort -k1,1V -k2,2n | cut -f 1-3 | uniq | wc -l
+# 27972
+#  27972 U2OS_CTCF_peaks.filt.bed
+cat multipleoverlaps1winner.tmp tiedoverlaps-strandagrees.tmp tiedoverlaps-stranddisagrees.pt1.tmp tiedoverlaps-stranddisagrees.pt2.tmp ctcf-jsp.1ovlp.tmp  ctcf-nojspovlp.tmp | sort -k1,1V -k2,2n | cut -f 6 | sort -k1,1 | uniq -c
+#7756 +
+#7432 -
+#12784 .
+
+cat multipleoverlaps1winner.tmp tiedoverlaps-strandagrees.tmp tiedoverlaps-stranddisagrees.pt1.tmp tiedoverlaps-stranddisagrees.pt2.tmp ctcf-jsp.1ovlp.tmp  ctcf-nojspovlp.tmp | sort -k1,1V -k2,2n | cut -f 1-3 >tmp1
+
+sort -k1,1V -k2,2n  U2OS_CTCF_peaks.filt.bed | cut -f 1-3 >tmp2
+diff -s tmp1 tmp2
+#Files tmp1 and tmp2 are identical
+
+cat multipleoverlaps1winner.tmp tiedoverlaps-strandagrees.tmp tiedoverlaps-stranddisagrees.pt1.tmp tiedoverlaps-stranddisagrees.pt2.tmp ctcf-jsp.1ovlp.tmp  ctcf-nojspovlp.tmp | sort -k1,1V -k2,2n >U2OS_CTCF_peaks.filt.strandinfo.bed
+
+#the ctcf peaks are non-mergeable.
+cut -f 1-3 U2OS_CTCF_peaks.filt.strandinfo.bed | bedtools merge -i stdin | wc -l
+#   27972
+
+#they range from 183 bp to (only ~5 of them) a bit over 1kb
+
+# ==========
+
+# game plan = :first retrieve strand info for all CTCFs, then find closest ctcf sites to each tad start ±40kb and tad stop ±40kb. pair them all possible ways, then select the ones that are convergent-inclusive.
+
+# 1. get list of all tad start coords, find which ctcfs overlap within a radius of say 10kb.
+# 2. get list of all tad stop coords, find which ctcfs overlap within a radius of say 10kb.
+
+
+# 3. for each tad (reconstitute the start/end coords into their tads), pair the ctcf sites all possible ways, select the pairs that are inclusive-convergent.
+
+# ± 5kb each side of tad start coords:
+awk '{print $1"\t"$2-5000"\t"($2+5000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed | awk '{if ($2<0) print $0}'
+#there are no negative values created by backing up 5 kb.
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-5000"\t"($2+5000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed )  | cut -f 1-3 | sort -k1,1V -k2,2n | uniq | wc -l
+#     270
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-5000"\t"($2+5000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed )  | cut -f 1-3 | sort -k1,1V -k2,2n | wc -l
+ #    270
+
+# every ctcf peak is overlapped by a ±5kb tad start coord 10kb region just once - duh. how about the inverse: every 10kb region around a tad start coord is overlapped by 1 max ctcf?? --> no, though most are unique:
+
+# 
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-5000"\t"($2+5000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | cut -f 10 | sort -k1,1 | wc -l
+#     270
+     
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-5000"\t"($2+5000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | cut -f 10 | sort -k1,1 | uniq | wc -l
+#     244
+
+# this is just a fraction of the tads..
+# 1182 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed
+
+
+# expand to 20kb regions around the start coords:
+awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed | awk '{if ($2<0) print $0}'
+# no neg coords created by backing up -10kb.
+
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed )  | cut -f 1-3 | sort -k1,1V -k2,2n | uniq | wc -l
+#518
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed )  | cut -f 1-3 | sort -k1,1V -k2,2n | wc -l
+# 518
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | cut -f 10 | sort -k1,1 | uniq | wc -l
+#     410
+
+
+## # ## # # ### 
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $7"-"$8"-"$9"\t"$4":"$6}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}'
+
+
+
+bedtools intersect -wa -wb -a U2OS_CTCF_peaks.filt.strandinfo.bed -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $10"\t"$4":"$6}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}'
+
+
+
+# for the combining of col1's with diff col2 vals, the last colum needs to be sepd from the first col by a colon.
+
+# change the sepator not to be a -: otherwise confused with the strandedness..
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1":"$2"-"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $7"-"$8"-"$9":"$4"-"$6}' | awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}'
+
+
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $8":"$1"_"$2"_"$3"_"$4}' | wc -l
+#     518
+
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $8":"$1"_"$2"_"$3"_"$4}'| awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | wc -l
+#     410
+
+# 1246 U2OS_CTCFinclsv-cnvgt.cisonly.uniq.hg19.bed
+# this means 1246/2 = 623 pairs of tad border ctcfs pat's method..
+
+
+# max nr overlaps is 6 ctcf sites to 1 tad ±10kb of start; capture it:
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$2-10000"\t"($2+10000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $8":"$1"_"$2"_"$3"_"$4}'| awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"a[6]}' >tad1.hg38toh19_ctcfpeaksallovlpsof20kbstartcoord.tmp
+
+# now do the same for the stop coord:
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$3-10000"\t"($3+10000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $8":"$1"_"$2"_"$3"_"$4}'| awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"a[6]}' >tad1.hg38toh19_ctcfpeaksallovlpsof20kbstopcoord.tmp
+# 414
+
+# is it mostly the same tads for which a ctcf overlapped ±10kb of a start coord?
+
+
+join -j 1 -o 1.1,1.2,2.2 <(sort -k1 tad1.hg38toh19_ctcfpeaksallovlpsof20kbstartcoord.tmp) <(sort -k1 tad1.hg38toh19_ctcfpeaksallovlpsof20kbstopcoord.tmp) | wc -l
+#     161
+     
+
+# v low amount...just go with pat's method??
+# Expand out to ±20kb around start and stop coords?
+
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$2-20000"\t"($2+20000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed | awk '{if ($2>0) print $0}') | awk '{print $8":"$1"_"$2"_"$3"_"$4}'| awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"a[6]}' >tad1.hg38toh19_ctcfpeaksallovlpsof40kbstartcoord.tmp
+# 666
+
+# goes up to 5 ctcf sites overlapping each start coord region
+
+
+bedtools intersect -wa -wb -a <(cut -f 1-3,6  U2OS_CTCF_peaks.filt.strandinfo.bed) -b <( awk '{print $1"\t"$3-20000"\t"($3+20000)"\t"$1"_"$2"_"$3}' 360min_rep1_40kb_TAD.hg38tohg19.mrg.bed ) | awk '{print $8":"$1"_"$2"_"$3"_"$4}'| awk -F: '$1==last {printf ":%s",$2; next} NR>1 {print "";} {last=$1; printf "%s",$0;} END{print "";}' | awk '{split ($1,a,/[:]/); print a[1]"\t"a[2]"\t"a[3]"\t"a[4]"\t"a[5]"\t"a[6]}' >tad1.hg38toh19_ctcfpeaksallovlpsof40kbstopcoord.tmp
+# 674
+
+# goes up to 5 ctcf sites overlapping each stop coord region
+#
+
+# combine my and pat's approaches? advantage of mine - it doesnt skip over tads. dont have to decide who is right, just include all potential sites that could be acting as boundary elements.
+join -j 1 -o 1.1,1.2,2.2  <( awk '{print $1"\t"$2":"$3":"$4":"$5":"$6}' tad1.hg38toh19_ctcfpeaksallovlpsof40kbstartcoord.tmp | sort -k1 ) <(awk '{print $1"\t"$2":"$3":"$4":"$5":"$6}' tad1.hg38toh19_ctcfpeaksallovlpsof40kbstopcoord.tmp | sort -k1 ) | tr '[ ]' '[\t]'
+
+
+join -j 1 -o 1.1,1.2,2.2  \
+<(awk '{if ($3!="") print $1"\t"$2":"$3; else print $0}' tad1.hg38toh19_ctcfpeaksallovlpsof40kbstartcoord.tmp | awk '{if ($4!="") print $1"\t"$2":"$3":"$4; else print $0}' | awk '{if ($5!="") print $1"\t"$2":"$3":"$4":"$5; else print $0}' | awk '{if ($6!="") print $1"\t"$2":"$3":"$4":"$5":"$6; else print $0}' | sort -k1 ) \
+<(awk '{if ($3!="") print $1"\t"$2":"$3; else print $0}' tad1.hg38toh19_ctcfpeaksallovlpsof40kbstopcoord.tmp | awk '{if ($4!="") print $1"\t"$2":"$3":"$4; else print $0}' | awk '{if ($5!="") print $1"\t"$2":"$3":"$4":"$5; else print $0}' | awk '{if ($6!="") print $1"\t"$2":"$3":"$4":"$5":"$6; else print $0}' | sort -k1) |\
+ tr '[ ]' '[\t]' >tad1.ctcfsovlpwithin40kb-start-end.hg19.tmp
+
+# now select for inclusive-convergent sites.
+# bedpe file to upload to igv should take the format of:
+ head U2OS_CTCFinclsv-cnvgt.cisonly.uniq.hg19.bed
+#chr1	8922576	8922860	U2OS_CTCF_peak_96_U2OS_CTCF_peak_111
+#chr1	9633905	9634089	U2OS_CTCF_peak_96_U2OS_CTCF_peak_111
+#chr1	12268937	12269264	U2OS_CTCF_peak_153_U2OS_CTCF_peak_202
+#chr1	16918337	16918604	U2OS_CTCF_peak_153_U2OS_CTCF_peak_202
+#chr1	16918337	16918604	U2OS_CTCF_peak_202_U2OS_CTCF_peak_244
+#chr1	19567753	19568086	U2OS_CTCF_peak_202_U2OS_CTCF_peak_244
+
+#so each pair of ctcfs gets two lines, first one is start ctcf site and second is second pair.
+
+#split multiple ctcf sites back out to separate lines?
+
+awk '{split ($2,a,/[:]/); print a[2]
+
+
+
+
